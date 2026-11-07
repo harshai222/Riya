@@ -1,0 +1,206 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile with Google account info, unique username, and personality settings for Riya",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "The Firebase Authentication UID"
+        },
+        "username": {
+          "type": "string",
+          "description": "Unique chosen username"
+        },
+        "usernameNormalized": {
+          "type": "string",
+          "description": "Lowercase normalized unique username for uniqueness checks"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Google display name"
+        },
+        "email": {
+          "type": "string",
+          "description": "Google account email"
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "Google profile photo URL"
+        },
+        "preferredName": {
+          "type": "string",
+          "description": "What Riya calls the user"
+        },
+        "favoriteVibe": {
+          "type": "string",
+          "description": "Favorite ambient aura"
+        },
+        "bio": {
+          "type": "string",
+          "description": "User bio or facts summary"
+        },
+        "role": {
+          "type": "string",
+          "description": "User role: user or admin"
+        },
+        "onboardingCompleted": {
+          "type": "boolean",
+          "description": "Whether the user has completed username onboarding"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Account registration timestamp"
+        },
+        "lastLoginAt": {
+          "type": "string",
+          "description": "Last Google login timestamp"
+        }
+      },
+      "required": ["uid", "createdAt", "lastLoginAt"]
+    },
+    "UsernameReservation": {
+      "title": "UsernameReservation",
+      "description": "Global unique username registry entry mapped to Firebase UID",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Owner Firebase UID"
+        },
+        "username": {
+          "type": "string",
+          "description": "Original case-preserved username"
+        },
+        "usernameNormalized": {
+          "type": "string",
+          "description": "Normalized lowercase username key"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Reservation timestamp"
+        }
+      },
+      "required": ["uid", "username", "usernameNormalized", "createdAt"]
+    },
+    "MemoryFact": {
+      "title": "MemoryFact",
+      "description": "Atomic facts and preferences remembered by Riya from past chats",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Owner user UID"
+        },
+        "category": {
+          "type": "string",
+          "description": "Category like preference, work, hobby, relationship"
+        },
+        "fact": {
+          "type": "string",
+          "description": "The specific memory fact"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        }
+      },
+      "required": ["id", "userId", "category", "fact", "createdAt"]
+    },
+    "ConversationSession": {
+      "title": "ConversationSession",
+      "description": "Recap and metadata of voice conversations",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Session conversation ID"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Owner UID"
+        },
+        "summary": {
+          "type": "string",
+          "description": "Short recap of conversation"
+        },
+        "vibeUsed": {
+          "type": "string",
+          "description": "Ambient vibe during session"
+        },
+        "highlights": {
+          "type": "string",
+          "description": "Key memorable banter moments"
+        },
+        "messageCount": {
+          "type": "number",
+          "description": "Number of dialog turns in this session"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Session creation time"
+        }
+      },
+      "required": ["id", "userId", "summary", "createdAt"]
+    },
+    "ConversationMessage": {
+      "title": "ConversationMessage",
+      "description": "Individual speech turn message in a conversation",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Message ID"
+        },
+        "conversationId": {
+          "type": "string",
+          "description": "Parent conversation ID"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Owner UID"
+        },
+        "speaker": {
+          "type": "string",
+          "description": "user or riya"
+        },
+        "text": {
+          "type": "string",
+          "description": "Transcribed speech content"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Timestamp of utterance"
+        }
+      },
+      "required": ["id", "conversationId", "userId", "speaker", "text", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/usernames/{usernameNormalized}": {
+      "schema": "UsernameReservation",
+      "description": "Global unique username lookup registry ensuring no duplicate usernames"
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Root user profile document containing preferences, settings, and Google identity"
+    },
+    "/users/{userId}/memories/{memoryId}": {
+      "schema": "MemoryFact",
+      "description": "Subcollection of remembered facts and preferences for this user"
+    },
+    "/users/{userId}/conversations/{conversationId}": {
+      "schema": "ConversationSession",
+      "description": "Subcollection of past voice conversations"
+    },
+    "/users/{userId}/conversations/{conversationId}/messages/{messageId}": {
+      "schema": "ConversationMessage",
+      "description": "Subcollection of messages inside a conversation session"
+    }
+  }
+}

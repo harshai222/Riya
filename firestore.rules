@@ -1,0 +1,158 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default-deny global safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email == '3881229harsh@gmail.com' && request.auth.token.email_verified == true) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // User Profile Validation
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'createdAt', 'lastLoginAt']) &&
+             data.keys().hasOnly(['uid', 'username', 'usernameNormalized', 'displayName', 'email', 'photoURL', 'preferredName', 'favoriteVibe', 'bio', 'role', 'onboardingCompleted', 'createdAt', 'lastLoginAt', 'updatedAt']) &&
+             data.uid == userId &&
+             (!('username' in data) || (data.username is string && data.username.size() >= 3 && data.username.size() <= 30 && data.username.matches('^[a-zA-Z0-9_]+$'))) &&
+             (!('usernameNormalized' in data) || (data.usernameNormalized is string && data.usernameNormalized.size() >= 3 && data.usernameNormalized.size() <= 30 && data.usernameNormalized.matches('^[a-z0-9_]+$'))) &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 120)) &&
+             (!('email' in data) || (data.email is string && data.email.size() <= 150)) &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1000)) &&
+             (!('preferredName' in data) || (data.preferredName is string && data.preferredName.size() > 0 && data.preferredName.size() <= 100)) &&
+             (!('favoriteVibe' in data) || (data.favoriteVibe is string && data.favoriteVibe.size() <= 50)) &&
+             (!('bio' in data) || (data.bio is string && data.bio.size() <= 1000)) &&
+             (!('role' in data) || (data.role is string && (data.role == 'user' || data.role == 'admin'))) &&
+             (!('onboardingCompleted' in data) || (data.onboardingCompleted is bool)) &&
+             data.createdAt is string && data.createdAt.size() <= 50 &&
+             data.lastLoginAt is string && data.lastLoginAt.size() <= 50;
+    }
+
+    // Username Reservation Validation
+    function isValidUsernameReservation(data, usernameNormalized) {
+      return data.keys().hasAll(['uid', 'username', 'usernameNormalized', 'createdAt']) &&
+             data.keys().hasOnly(['uid', 'username', 'usernameNormalized', 'createdAt']) &&
+             data.uid == request.auth.uid &&
+             data.username is string && data.username.size() >= 3 && data.username.size() <= 30 && data.username.matches('^[a-zA-Z0-9_]+$') &&
+             data.usernameNormalized == usernameNormalized &&
+             data.createdAt is string && data.createdAt.size() <= 50;
+    }
+
+    // Memory Fact Validation
+    function isValidMemoryFact(data, userId) {
+      return data.keys().hasAll(['id', 'userId', 'category', 'fact', 'createdAt']) &&
+             data.keys().hasOnly(['id', 'userId', 'category', 'fact', 'createdAt', 'updatedAt']) &&
+             data.userId == userId &&
+             data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+             data.category is string && data.category.size() > 0 && data.category.size() <= 50 &&
+             data.fact is string && data.fact.size() > 0 && data.fact.size() <= 1000;
+    }
+
+    // Conversation Session Validation
+    function isValidConversationSession(data, userId) {
+      return data.keys().hasAll(['id', 'userId', 'summary', 'createdAt']) &&
+             data.keys().hasOnly(['id', 'userId', 'summary', 'vibeUsed', 'highlights', 'messageCount', 'createdAt']) &&
+             data.userId == userId &&
+             data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+             data.summary is string && data.summary.size() > 0 && data.summary.size() <= 2000 &&
+             (!('vibeUsed' in data) || (data.vibeUsed is string && data.vibeUsed.size() <= 50)) &&
+             (!('highlights' in data) || (data.highlights is string && data.highlights.size() <= 2000)) &&
+             (!('messageCount' in data) || (data.messageCount is number && data.messageCount >= 0));
+    }
+
+    // Conversation Message Validation
+    function isValidConversationMessage(data, userId, conversationId) {
+      return data.keys().hasAll(['id', 'conversationId', 'userId', 'speaker', 'text', 'createdAt']) &&
+             data.keys().hasOnly(['id', 'conversationId', 'userId', 'speaker', 'text', 'createdAt']) &&
+             data.userId == userId &&
+             data.conversationId == conversationId &&
+             data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+             (data.speaker == 'user' || data.speaker == 'riya') &&
+             data.text is string && data.text.size() > 0 && data.text.size() <= 2000;
+    }
+
+    // 1. Globally Unique Usernames Collection
+    match /usernames/{usernameNormalized} {
+      allow get: if isSignedIn() && isValidId(usernameNormalized);
+      allow list: if isAdmin();
+      allow create: if isSignedIn() && isValidId(usernameNormalized) && isValidUsernameReservation(incoming(), usernameNormalized);
+      allow update: if isSignedIn() && isValidId(usernameNormalized) && incoming().uid == request.auth.uid && existing().uid == request.auth.uid;
+      allow delete: if isAdmin() || (isSignedIn() && existing().uid == request.auth.uid);
+    }
+
+    // 2. Admins Collection
+    match /admins/{adminId} {
+      allow read: if isAdmin();
+      allow write: if false; // System provisioned or manual
+    }
+
+    // 3. User Data Root & Subcollections
+    match /users/{userId} {
+      allow get: if (isOwner(userId) || isAdmin()) && isValidId(userId);
+      allow list: if isAdmin();
+      allow create: if isOwner(userId) && isValidId(userId) && isValidUserProfile(incoming(), userId);
+      allow update: if (isOwner(userId) || isAdmin()) && isValidId(userId) && isValidUserProfile(incoming(), userId) &&
+                       incoming().uid == existing().uid &&
+                       incoming().createdAt == existing().createdAt;
+      allow delete: if (isOwner(userId) || isAdmin()) && isValidId(userId);
+
+      // Memory Facts Subcollection
+      match /memories/{memoryId} {
+        allow get, list: if (isOwner(userId) || isAdmin()) && isValidId(userId);
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(memoryId) &&
+                         isValidMemoryFact(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(userId) && isValidId(memoryId) &&
+                         isValidMemoryFact(incoming(), userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().id == existing().id &&
+                         incoming().createdAt == existing().createdAt;
+        allow delete: if (isOwner(userId) || isAdmin()) && isValidId(userId) && isValidId(memoryId);
+      }
+
+      // Conversations Subcollection
+      match /conversations/{conversationId} {
+        allow get, list: if (isOwner(userId) || isAdmin()) && isValidId(userId);
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(conversationId) &&
+                         isValidConversationSession(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(userId) && isValidId(conversationId) &&
+                         isValidConversationSession(incoming(), userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().id == existing().id;
+        allow delete: if (isOwner(userId) || isAdmin()) && isValidId(userId) && isValidId(conversationId);
+
+        // Messages Subcollection
+        match /messages/{messageId} {
+          allow get, list: if (isOwner(userId) || isAdmin()) && isValidId(userId) && isValidId(conversationId);
+          allow create: if isOwner(userId) && isValidId(userId) && isValidId(conversationId) && isValidId(messageId) &&
+                           isValidConversationMessage(incoming(), userId, conversationId);
+          allow update, delete: if (isOwner(userId) || isAdmin()) && isValidId(userId) && isValidId(conversationId) && isValidId(messageId);
+        }
+      }
+    }
+  }
+}
