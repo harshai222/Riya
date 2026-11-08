@@ -9,6 +9,10 @@
           "type": "string",
           "description": "The Firebase Authentication UID"
         },
+        "publicUid": {
+          "type": "string",
+          "description": "10-11 digit numeric unique public identifier"
+        },
         "username": {
           "type": "string",
           "description": "Unique chosen username"
@@ -56,9 +60,104 @@
         "lastLoginAt": {
           "type": "string",
           "description": "Last Google login timestamp"
+        },
+        "accountType": {
+          "type": "string",
+          "enum": ["public", "private"],
+          "description": "Account privacy setting"
+        },
+        "followersCount": {
+          "type": "number",
+          "description": "Total followers"
+        },
+        "followingCount": {
+          "type": "number",
+          "description": "Total following"
         }
       },
-      "required": ["uid", "createdAt", "lastLoginAt"]
+      "required": ["uid", "publicUid", "createdAt", "lastLoginAt", "accountType"]
+    },
+    "FollowRelationship": {
+      "title": "FollowRelationship",
+      "description": "Active follow relationship between two users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "followerUid": { "type": "string" },
+        "followingUid": { "type": "string" },
+        "status": { "type": "string", "enum": ["following"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "followerUid", "followingUid", "status", "createdAt"]
+    },
+    "FollowRequest": {
+      "title": "FollowRequest",
+      "description": "Pending follow request for private accounts",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "senderUid": { "type": "string" },
+        "receiverUid": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "accepted", "rejected"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "senderUid", "receiverUid", "status", "createdAt"]
+    },
+    "ChatConversation": {
+      "title": "ChatConversation",
+      "description": "A 1-to-1 chat session between two users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "participantIds": { "type": "array", "items": { "type": "string" } },
+        "lastMessage": { "type": "string" },
+        "lastMessageAt": { "type": "string" },
+        "lastSenderId": { "type": "string" },
+        "unreadCount": { "type": "object", "description": "Map of userId to unread count" }
+      },
+      "required": ["id", "participantIds", "lastMessageAt"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "An individual message in a social chat",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "conversationId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "type": { "type": "string", "enum": ["text", "image", "video"] },
+        "text": { "type": "string" },
+        "mediaUrl": { "type": "string" },
+        "storagePath": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "read": { "type": "boolean" }
+      },
+      "required": ["id", "conversationId", "senderId", "type", "createdAt"]
+    },
+    "SocialNotification": {
+      "title": "SocialNotification",
+      "description": "User notification for social events",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "enum": ["follow_request", "follow_accept", "new_message"] },
+        "fromUid": { "type": "string" },
+        "fromUsername": { "type": "string" },
+        "relatedId": { "type": "string", "description": "e.g., requestId or conversationId" },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "type", "fromUid", "read", "createdAt"]
+    },
+    "PublicUidReservation": {
+      "title": "PublicUidReservation",
+      "description": "Index entry for public numeric UID uniqueness",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["uid", "createdAt"]
     },
     "UsernameReservation": {
       "title": "UsernameReservation",
@@ -179,16 +278,72 @@
         }
       },
       "required": ["id", "conversationId", "userId", "speaker", "text", "createdAt"]
+    },
+    "GeminiConfig": {
+      "title": "GeminiConfig",
+      "description": "Centralized Gemini API configuration including the protected API key.",
+      "type": "object",
+      "properties": {
+        "apiKey": {
+          "type": "string",
+          "description": "Privileged Gemini API Key (Masked in UI)"
+        },
+        "activeModel": {
+          "type": "string",
+          "description": "Currently active Gemini model name"
+        },
+        "activeVoice": {
+          "type": "string",
+          "description": "Currently active prebuilt voice name"
+        },
+        "version": {
+          "type": "number",
+          "description": "Configuration version number"
+        },
+        "status": {
+          "type": "string",
+          "description": "active, invalid, or maintenance"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Last update timestamp"
+        }
+      },
+      "required": ["activeModel", "activeVoice", "version", "updatedAt"]
     }
   },
   "firestore": {
     "/usernames/{usernameNormalized}": {
       "schema": "UsernameReservation",
-      "description": "Global unique username lookup registry ensuring no duplicate usernames"
+      "description": "Global unique username lookup registry"
+    },
+    "/publicUids/{publicUid}": {
+      "schema": "PublicUidReservation",
+      "description": "Uniqueness index for numeric public UIDs"
     },
     "/users/{userId}": {
       "schema": "UserProfile",
-      "description": "Root user profile document containing preferences, settings, and Google identity"
+      "description": "Root user profile"
+    },
+    "/users/{userId}/notifications/{notificationId}": {
+      "schema": "SocialNotification",
+      "description": "User social notifications"
+    },
+    "/follows/{relationshipId}": {
+      "schema": "FollowRelationship",
+      "description": "Active follow records"
+    },
+    "/followRequests/{requestId}": {
+      "schema": "FollowRequest",
+      "description": "Pending follow requests"
+    },
+    "/conversations/{conversationId}": {
+      "schema": "ChatConversation",
+      "description": "Active chat threads"
+    },
+    "/conversations/{conversationId}/messages/{messageId}": {
+      "schema": "ChatMessage",
+      "description": "Messages inside chats"
     },
     "/users/{userId}/memories/{memoryId}": {
       "schema": "MemoryFact",
@@ -201,6 +356,10 @@
     "/users/{userId}/conversations/{conversationId}/messages/{messageId}": {
       "schema": "ConversationMessage",
       "description": "Subcollection of messages inside a conversation session"
+    },
+    "/systemConfig/gemini": {
+      "schema": "GeminiConfig",
+      "description": "CENTRAL CONFIGURATION: Contains the active Gemini API Key and model settings. Restricted to Admin."
     }
   }
 }

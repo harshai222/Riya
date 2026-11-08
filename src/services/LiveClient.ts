@@ -2,6 +2,16 @@ import { AudioRecorder } from './AudioRecorder';
 import { AudioStreamer } from './AudioStreamer';
 import { LiveSessionStatus, ToolCallExecution, LiveTranscriptItem } from '../utils/sessionTypes';
 
+export interface DiagnosticStats {
+  chunksSent: number;
+  chunksReceived: number;
+  playbackActive: boolean;
+  microphoneActive: boolean;
+  configVersion?: number;
+  geminiModel?: string;
+  lastError?: string | null;
+}
+
 export interface LiveClientCallbacks {
   onStatusChange: (status: LiveSessionStatus) => void;
   onUserVolume: (volume: number) => void;
@@ -9,6 +19,7 @@ export interface LiveClientCallbacks {
   onTranscript: (item: LiveTranscriptItem) => void;
   onToolExecute: (tool: ToolCallExecution) => void;
   onError: (errorMsg: string) => void;
+  onDiagnosticStats?: (stats: DiagnosticStats) => void;
 }
 
 export class LiveClient {
@@ -19,6 +30,14 @@ export class LiveClient {
   private callbacks: LiveClientCallbacks;
   private isConnecting: boolean = false;
   private intentionalDisconnect: boolean = false;
+
+  // Diagnostic Stats
+  private chunksSent: number = 0;
+  private chunksReceived: number = 0;
+  private microphoneActive: boolean = false;
+  private configVersion: number = 1;
+  private geminiModel: string = 'gemini-3.1-flash-live-preview';
+  private lastError: string | null = null;
 
   constructor(callbacks: LiveClientCallbacks) {
     this.callbacks = callbacks;
@@ -32,6 +51,21 @@ export class LiveClient {
     if (this.status !== newStatus) {
       this.status = newStatus;
       this.callbacks.onStatusChange(newStatus);
+      this.notifyDiagnosticStats();
+    }
+  }
+
+  private notifyDiagnosticStats() {
+    if (this.callbacks.onDiagnosticStats) {
+      this.callbacks.onDiagnosticStats({
+        chunksSent: this.chunksSent,
+        chunksReceived: this.chunksReceived,
+        playbackActive: this.streamer ? this.streamer.getIsPlaying() : false,
+        microphoneActive: this.microphoneActive,
+        configVersion: this.configVersion,
+        geminiModel: this.geminiModel,
+        lastError: this.lastError,
+      });
     }
   }
 
@@ -40,10 +74,13 @@ export class LiveClient {
 
     this.intentionalDisconnect = false;
     this.isConnecting = true;
+    this.chunksSent = 0;
+    this.chunksReceived = 0;
+    this.lastError = null;
     this.setStatus('connecting');
 
     try {
-      // 1. Initialize streamer
+      // 1. Initialize streamer and unlock Web Audio API on user gesture
       this.streamer = new AudioStreamer({
         onVolumeChange: (vol) => {
           this.callbacks.onRiyaVolume(vol);
@@ -53,14 +90,18 @@ export class LiveClient {
           if (this.status !== 'disconnected' && this.status !== 'connecting') {
             this.setStatus(isSpeaking ? 'speaking' : 'listening');
           }
+          this.notifyDiagnosticStats();
         },
       });
+      this.streamer.resume();
 
       // 2. Initialize recorder
       this.recorder = new AudioRecorder({
         onAudioChunk: (base64Pcm) => {
           if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify({ audio: base64Pcm }));
+            this.chunksSent++;
+            this.notifyDiagnosticStats();
           }
         },
         onVolumeChange: (vol) => {
@@ -70,6 +111,8 @@ export class LiveClient {
 
       // Start microphone recording
       await this.recorder.start();
+      this.microphoneActive = true;
+      this.notifyDiagnosticStats();
 
       // 3. Connect WebSocket to server
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -78,7 +121,6 @@ export class LiveClient {
 
       this.ws.onopen = () => {
         console.log('[LiveClient] Connected to server bridge');
-        // Transmit initial user memory and context to server
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
           this.ws.send(JSON.stringify({ type: 'init', memoryContext }));
         }
@@ -90,11 +132,16 @@ export class LiveClient {
 
           if (msg.status === 'connected') {
             this.isConnecting = false;
+            if (msg.model) this.geminiModel = msg.model;
+            if (msg.configVersion) this.configVersion = msg.configVersion;
             this.setStatus('listening');
+            this.notifyDiagnosticStats();
           }
 
           if (msg.audio && this.streamer) {
+            this.chunksReceived++;
             this.streamer.playAudioChunk(msg.audio);
+            this.notifyDiagnosticStats();
           }
 
           if (msg.interrupted && this.streamer) {
@@ -130,7 +177,6 @@ export class LiveClient {
               timestamp: Date.now(),
             });
 
-            // Return to listening/speaking shortly after UI animation
             setTimeout(() => {
               if (this.status === 'executing_tool') {
                 this.setStatus('listening');
@@ -140,7 +186,9 @@ export class LiveClient {
 
           if (msg.error) {
             console.error('[LiveClient Server Error]', msg.error);
+            this.lastError = msg.error;
             this.callbacks.onError(msg.error);
+            this.notifyDiagnosticStats();
             this.disconnect();
           }
         } catch (e) {
@@ -148,10 +196,13 @@ export class LiveClient {
         }
       };
 
-      this.ws.onerror = (err) => {
-        console.error('[LiveClient] WebSocket error', err);
-        if (!this.intentionalDisconnect) {
-          this.callbacks.onError('Connection to voice server failed. Check your network or server status.');
+      this.ws.onerror = (evt: Event) => {
+        console.warn('[LiveClient] WebSocket connection event:', evt.type || 'error');
+        if (!this.intentionalDisconnect && !this.lastError) {
+          const errStr = 'Connection to voice server disconnected. Please check your network or API status.';
+          this.lastError = errStr;
+          this.callbacks.onError(errStr);
+          this.notifyDiagnosticStats();
         }
       };
 
@@ -169,11 +220,13 @@ export class LiveClient {
         err.message?.toLowerCase().includes('permission') ||
         err.message?.toLowerCase().includes('denied');
 
-      this.callbacks.onError(
-        isPermissionDenied
-          ? 'Microphone access was denied. Please allow microphone permission in your browser URL bar or open the app in a dedicated tab to talk with Riya.'
-          : `Failed to start session: ${err.message || err}`
-      );
+      const errorMsg = isPermissionDenied
+        ? 'Microphone access was denied. Please allow microphone permission in your browser URL bar or open the app in a dedicated tab to talk with Riya.'
+        : `Failed to start session: ${err.message || err}`;
+
+      this.lastError = errorMsg;
+      this.callbacks.onError(errorMsg);
+      this.notifyDiagnosticStats();
       this.disconnect();
     }
   }
@@ -201,6 +254,7 @@ export class LiveClient {
   public disconnect() {
     this.intentionalDisconnect = true;
     this.isConnecting = false;
+    this.microphoneActive = false;
 
     if (this.recorder) {
       this.recorder.stop();
@@ -222,5 +276,7 @@ export class LiveClient {
     this.setStatus('disconnected');
     this.callbacks.onUserVolume(0);
     this.callbacks.onRiyaVolume(0);
+    this.notifyDiagnosticStats();
   }
 }
+

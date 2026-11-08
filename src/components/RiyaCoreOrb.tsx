@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { LiveSessionStatus, VibeConfig } from '../utils/sessionTypes';
-import { Mic, MicOff, Power, Sparkles, Volume2 } from 'lucide-react';
+import { Mic, Power, Sparkles, Volume2 } from 'lucide-react';
 
 interface RiyaCoreOrbProps {
   status: LiveSessionStatus;
@@ -226,103 +226,28 @@ export const RiyaCoreOrb: React.FC<RiyaCoreOrbProps> = ({
             {/* Central Icon */}
             {status === 'disconnected' ? (
               <div className="flex flex-col items-center text-slate-300 group-hover:text-white transition-colors">
-                <Power className="w-9 h-9 mb-1 text-violet-400 group-hover:scale-110 transition-transform" />
-                <span className="text-[11px] font-bold tracking-wider uppercase">
-                  Wake
-                </span>
+                <Power className="w-9 h-9 text-violet-400 group-hover:scale-110 transition-transform" />
               </div>
             ) : status === 'connecting' ? (
               <div className="flex flex-col items-center text-cyan-300">
-                <div className="w-8 h-8 border-3 border-cyan-400 border-t-transparent rounded-full animate-spin mb-1" />
-                <span className="text-[10px] font-semibold tracking-widest uppercase">
-                  Syncing
-                </span>
+                <div className="w-8 h-8 border-3 border-cyan-400 border-t-transparent rounded-full animate-spin" />
               </div>
             ) : status === 'speaking' ? (
               <div className="flex flex-col items-center text-pink-300">
-                <Volume2 className="w-9 h-9 animate-bounce text-pink-400 mb-1" />
-                <span className="text-[10px] font-bold tracking-wider uppercase">
-                  Riya
-                </span>
+                <Volume2 className="w-9 h-9 animate-bounce text-pink-400" />
               </div>
             ) : status === 'executing_tool' ? (
               <div className="flex flex-col items-center text-amber-300">
-                <Sparkles className="w-9 h-9 animate-spin text-amber-400 mb-1" />
-                <span className="text-[10px] font-bold tracking-wider uppercase">
-                  Action
-                </span>
+                <Sparkles className="w-9 h-9 animate-spin text-amber-400" />
               </div>
             ) : (
               <div className="flex flex-col items-center text-violet-300">
-                <Mic className="w-9 h-9 text-violet-400 mb-1 animate-pulse" />
-                <span className="text-[10px] font-bold tracking-wider uppercase">
-                  Listening
-                </span>
+                <Mic className="w-9 h-9 text-violet-400 animate-pulse" />
               </div>
             )}
           </button>
 
-          {/* Quick mic mute toggle button when active */}
-          {status !== 'disconnected' && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggleMute();
-              }}
-              type="button"
-              title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
-              aria-label={isMuted ? 'Unmute microphone' : 'Mute microphone'}
-              className={`mt-4 px-3 py-1.5 rounded-full flex items-center space-x-1.5 text-xs font-semibold backdrop-blur-md border transition-all ${
-                isMuted
-                  ? 'bg-rose-950/80 text-rose-300 border-rose-500/60 shadow-lg shadow-rose-900/40'
-                  : 'bg-slate-900/80 text-slate-300 border-slate-700/80 hover:text-white hover:border-slate-500'
-              }`}
-            >
-              {isMuted ? (
-                <>
-                  <MicOff className="w-3.5 h-3.5 text-rose-400" />
-                  <span>Mic Muted</span>
-                </>
-              ) : (
-                <>
-                  <Mic className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Mic Active</span>
-                </>
-              )}
-            </button>
-          )}
         </div>
-      </div>
-
-      {/* Dynamic Status Tagline */}
-      <div className="mt-3 text-center px-4">
-        <p className="text-sm font-medium text-slate-300">
-          {status === 'disconnected' && (
-            <span className="text-slate-400">
-              Tap the orb to start live voice talk with <strong className="text-violet-400">Riya</strong>
-            </span>
-          )}
-          {status === 'connecting' && (
-            <span className="text-cyan-300 animate-pulse">
-              Connecting real-time 16kHz audio session...
-            </span>
-          )}
-          {status === 'listening' && (
-            <span className="text-violet-300">
-              {isMuted ? 'Microphone muted — unmute to speak' : 'Go ahead, talk to me... I’m all ears.'}
-            </span>
-          )}
-          {status === 'speaking' && (
-            <span className="text-pink-300 font-medium">
-              Riya is speaking (tap orb to interrupt or stop)
-            </span>
-          )}
-          {status === 'executing_tool' && (
-            <span className="text-amber-300 font-medium">
-              Executing browser action...
-            </span>
-          )}
-        </p>
       </div>
     </div>
   );

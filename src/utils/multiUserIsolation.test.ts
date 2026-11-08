@@ -58,6 +58,9 @@ test('Per-user isolation: Profile data is strictly scoped to the user UID', () =
     favoriteVibe: 'romantic',
     createdAt: '2026-01-01T00:00:00Z',
     lastLoginAt: '2026-01-02T00:00:00Z',
+    accountType: 'public',
+    followersCount: 0,
+    followingCount: 0,
   };
 
   const profileB: DbUserProfile = {
@@ -68,6 +71,9 @@ test('Per-user isolation: Profile data is strictly scoped to the user UID', () =
     favoriteVibe: 'emerald_matrix',
     createdAt: '2026-01-01T00:00:00Z',
     lastLoginAt: '2026-01-02T00:00:00Z',
+    accountType: 'private',
+    followersCount: 10,
+    followingCount: 5,
   };
 
   assert.notStrictEqual(profileA.uid, profileB.uid);

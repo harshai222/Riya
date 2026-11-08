@@ -8,17 +8,18 @@ import {
   ToolCallExecution,
   LiveTranscriptItem,
 } from './utils/sessionTypes';
-import { LiveClient } from './services/LiveClient';
+import { LiveClient, DiagnosticStats } from './services/LiveClient';
 import { HeaderHUD } from './components/HeaderHUD';
 import { RiyaCoreOrb } from './components/RiyaCoreOrb';
 import { ToolWidgets } from './components/ToolWidgets';
-import { ConversationStarters } from './components/ConversationStarters';
 import { CaptionsOverlay } from './components/CaptionsOverlay';
-import { SettingsModal } from './components/SettingsModal';
 import { MemoryVaultModal } from './components/MemoryVaultModal';
 import { AuthScreen } from './components/AuthScreen';
 import { UsernameSetupScreen } from './components/UsernameSetupScreen';
 import { AdminPanelModal } from './components/AdminPanelModal';
+import { SocialHub } from './components/social/SocialHub';
+import { DiagnosticPanel, DiagnosticData } from './components/DiagnosticPanel';
+import { PresenceService } from './services/presenceService';
 import {
   auth,
   onAuthStateChanged,
@@ -38,7 +39,7 @@ import {
   signOutUser,
   isUserAdmin,
 } from './lib/firebase';
-import { AlertCircle, X, Sparkles, Brain } from 'lucide-react';
+import { AlertCircle, X, Sparkles } from 'lucide-react';
 
 export default function App() {
   const [authLoading, setAuthLoading] = useState<boolean>(true);
@@ -54,11 +55,21 @@ export default function App() {
   const [latestToolCall, setLatestToolCall] = useState<ToolCallExecution | null>(null);
   const [latestTranscript, setLatestTranscript] = useState<LiveTranscriptItem | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isMemoryVaultOpen, setIsMemoryVaultOpen] = useState<boolean>(false);
+  const [isSocialHubOpen, setIsSocialHubOpen] = useState<boolean>(false);
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState<boolean>(false);
-  const [speechHint, setSpeechHint] = useState<string | null>(null);
-  const [memoryNotice, setMemoryNotice] = useState<string | null>(null);
+  const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState<boolean>(false);
+
+  // Diagnostic metrics state
+  const [diagStats, setDiagStats] = useState<DiagnosticStats>({
+    chunksSent: 0,
+    chunksReceived: 0,
+    playbackActive: false,
+    microphoneActive: false,
+    configVersion: 1,
+    geminiModel: 'gemini-3.1-flash-live-preview',
+    lastError: null,
+  });
 
   // Authenticated Per-User Database Memory State
   const [profile, setProfile] = useState<DbUserProfile | null>(null);
@@ -89,7 +100,6 @@ export default function App() {
   // Firebase Auth State Listener & Per-User Isolation Loader
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      // If user signed out or changed, immediately disconnect active live voice session
       if (clientRef.current) {
         clientRef.current.disconnect();
       }
@@ -101,7 +111,6 @@ export default function App() {
 
       if (user) {
         try {
-          // Sync safe Google account info into users/{uid}
           const userProfile = await syncUserProfileOnLogin(user);
           setProfile(userProfile);
 
@@ -109,7 +118,6 @@ export default function App() {
             setCurrentVibeId(userProfile.favoriteVibe as VibeType);
           }
 
-          // If user already has a claimed username, load their isolated database records
           if (userProfile.username) {
             const facts = await getMemoryFacts(user.uid);
             setMemories(facts || []);
@@ -121,7 +129,6 @@ export default function App() {
           console.error('Failed to load user data from Firestore:', err);
         }
       } else {
-        // Complete state teardown on sign out - ensures zero cross-user data leakage
         setProfile(null);
         setMemories([]);
         setPastSessions([]);
@@ -138,7 +145,14 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // When username is claimed for first time, load initial records
+  // Real-time Online Presence Tracking
+  useEffect(() => {
+    if (currentUser?.uid) {
+      const stop = PresenceService.initPresence(currentUser.uid);
+      return () => stop();
+    }
+  }, [currentUser?.uid]);
+
   const handleUsernameClaimed = async (updatedProfile: DbUserProfile) => {
     setProfile(updatedProfile);
     if (currentUser) {
@@ -155,7 +169,6 @@ export default function App() {
     }
   };
 
-  // Handle client callbacks
   const handleStatusChange = useCallback(
     async (newStatus: LiveSessionStatus) => {
       setStatus(newStatus);
@@ -166,7 +179,6 @@ export default function App() {
         }
       }
 
-      // When call ends, save conversation recap and speech turns into Firestore under users/{uid}/conversations
       if (newStatus === 'disconnected' && activeSessionStartRef.current && currentUser) {
         const dialogHistory = sessionTranscriptsRef.current;
         if (dialogHistory.length >= 2) {
@@ -224,6 +236,10 @@ export default function App() {
   const handleTranscript = useCallback((item: LiveTranscriptItem) => {
     setLatestTranscript(item);
     sessionTranscriptsRef.current.push(item);
+  }, []);
+
+  const handleDiagnosticStats = useCallback((stats: DiagnosticStats) => {
+    setDiagStats(stats);
   }, []);
 
   const handleToolExecute = useCallback(
@@ -286,8 +302,6 @@ export default function App() {
           try {
             const savedFact = await addMemoryFact(uid, category, fact);
             setMemories((prev) => [savedFact, ...prev]);
-            setMemoryNotice(`Riya saved to memory: "${fact}"`);
-            setTimeout(() => setMemoryNotice(null), 4500);
           } catch (err) {
             console.error('Failed to save memory fact:', err);
           }
@@ -299,11 +313,7 @@ export default function App() {
             const removed = await forgetFactByQuery(uid, factQuery, memoriesRef.current);
             if (removed) {
               setMemories((prev) => prev.filter((m) => m.id !== removed.id));
-              setMemoryNotice(`Riya forgot memory: "${removed.fact}"`);
-            } else {
-              setMemoryNotice(`Riya noted request to forget: "${factQuery}"`);
             }
-            setTimeout(() => setMemoryNotice(null), 4500);
           } catch (err) {
             console.error('Failed to remove memory fact:', err);
           }
@@ -329,15 +339,15 @@ export default function App() {
             createdAt: profile?.createdAt || new Date().toISOString(),
             lastLoginAt: profile?.lastLoginAt || new Date().toISOString(),
             updatedAt: new Date().toISOString(),
+            accountType: profile?.accountType || 'public',
+            followersCount: profile?.followersCount || 0,
+            followingCount: profile?.followingCount || 0,
           };
           setProfile(updated);
           saveUserProfile(updated).catch(console.error);
-          setMemoryNotice(`Preferences updated: Calling you "${updated.preferredName}"`);
-          setTimeout(() => setMemoryNotice(null), 4000);
         }
       }
 
-      // Auto-clear tool highlight after 3.5s
       setTimeout(() => {
         setLatestToolCall((curr) => (curr?.id === tool.id ? null : curr));
       }, 3500);
@@ -358,6 +368,7 @@ export default function App() {
       onTranscript: handleTranscript,
       onToolExecute: handleToolExecute,
       onError: handleError,
+      onDiagnosticStats: handleDiagnosticStats,
     });
 
     return () => {
@@ -372,6 +383,7 @@ export default function App() {
     handleTranscript,
     handleToolExecute,
     handleError,
+    handleDiagnosticStats,
   ]);
 
   const toggleConnect = async () => {
@@ -380,7 +392,6 @@ export default function App() {
     if (status === 'disconnected') {
       setErrorMessage(null);
 
-      // Package relevant persistent memory context for Riya
       const relevantMemories = memories.slice(0, 15).map((m) => ({
         category: m.category,
         fact: m.fact,
@@ -411,8 +422,6 @@ export default function App() {
   };
 
   const handleSelectPrompt = (prompt: string) => {
-    setSpeechHint(`Say out loud to Riya: "${prompt}"`);
-    setTimeout(() => setSpeechHint(null), 4500);
 
     if (status === 'disconnected') {
       toggleConnect();
@@ -421,6 +430,9 @@ export default function App() {
 
   const handleSignOut = async () => {
     try {
+      if (currentUser?.uid) {
+        PresenceService.stopPresence(currentUser.uid);
+      }
       if (clientRef.current) {
         clientRef.current.disconnect();
       }
@@ -430,7 +442,6 @@ export default function App() {
     }
   };
 
-  // Memory Vault actions
   const handleSaveProfile = async (preferredName: string, favoriteVibe: VibeType) => {
     if (!currentUser) return;
     const updated: DbUserProfile = {
@@ -447,26 +458,40 @@ export default function App() {
       createdAt: profile?.createdAt || new Date().toISOString(),
       lastLoginAt: profile?.lastLoginAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      accountType: profile?.accountType || 'public',
+      followersCount: profile?.followersCount || 0,
+      followingCount: profile?.followingCount || 0,
     };
     await saveUserProfile(updated);
     setProfile(updated);
     setCurrentVibeId(favoriteVibe);
-    setMemoryNotice(`Profile saved! Riya will call you "${preferredName}".`);
-    setTimeout(() => setMemoryNotice(null), 4000);
   };
 
   const handleAddMemory = async (category: string, fact: string) => {
     if (!currentUser) return;
     const record = await addMemoryFact(currentUser.uid, category, fact);
     setMemories((prev) => [record, ...prev]);
-    setMemoryNotice(`Memory saved: "${fact}"`);
-    setTimeout(() => setMemoryNotice(null), 4000);
   };
 
   const handleDeleteMemory = async (memoryId: string) => {
     if (!currentUser) return;
     await deleteMemoryFact(currentUser.uid, memoryId);
     setMemories((prev) => prev.filter((m) => m.id !== memoryId));
+  };
+
+  // Diagnostic Data payload for HUD
+  const diagnosticData: DiagnosticData = {
+    firebaseAuthConnected: Boolean(currentUser),
+    firestoreConnected: Boolean(profile),
+    geminiConfigLoaded: Boolean(diagStats.configVersion),
+    configVersion: diagStats.configVersion || 1,
+    geminiModel: diagStats.geminiModel || 'gemini-3.1-flash-live-preview',
+    liveSessionStatus: status,
+    microphoneActive: diagStats.microphoneActive,
+    chunksSent: diagStats.chunksSent,
+    chunksReceived: diagStats.chunksReceived,
+    playbackActive: diagStats.playbackActive,
+    lastError: errorMessage || diagStats.lastError,
   };
 
   // 1. Initial Auth Token Checking Screen
@@ -523,14 +548,14 @@ export default function App() {
         currentVibe={vibe}
         userVolume={userVolume}
         riyaVolume={riyaVolume}
-        memoryCount={memories.length}
         currentUser={currentUser}
         username={profile?.username}
-        onOpenSettings={() => setIsSettingsOpen(true)}
-        onOpenMemoryVault={() => setIsMemoryVaultOpen(true)}
-        onOpenAdminPanel={() => setIsAdminPanelOpen(true)}
-        onSelectVibe={(v) => setCurrentVibeId(v)}
+        publicUid={profile?.publicUid}
         onSignOut={handleSignOut}
+        onOpenSocial={() => setIsSocialHubOpen(true)}
+        onOpenAdmin={() => setIsAdminPanelOpen(true)}
+        onOpenMemoryVault={() => setIsMemoryVaultOpen(true)}
+        onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
       />
 
       {/* Main Interactive Stage */}
@@ -580,27 +605,11 @@ export default function App() {
           </div>
         )}
 
-        {/* Real-time Memory Saved/Forgotten Notification Toast */}
-        {memoryNotice && (
-          <div className="w-full max-w-md mx-auto mb-2.5 p-3 rounded-xl bg-violet-950/90 border border-violet-700/80 shadow-xl backdrop-blur-md flex items-center space-x-2 text-violet-200 text-xs animate-in fade-in duration-200">
-            <Brain className="w-4 h-4 text-violet-400 shrink-0" />
-            <span className="font-semibold">{memoryNotice}</span>
-          </div>
-        )}
-
-        {/* Speech Hint Toast */}
-        {speechHint && (
-          <div className="w-full max-w-md mx-auto mb-3 p-3 rounded-xl bg-slate-900/90 border border-slate-700/80 shadow-xl backdrop-blur-md flex items-center space-x-2 text-slate-200 text-xs animate-in fade-in duration-200">
-            <Sparkles className="w-4 h-4 text-violet-400 shrink-0" />
-            <span className="font-medium">{speechHint}</span>
-          </div>
-        )}
 
         {/* Tool Action notifications and active countdown widgets */}
         <ToolWidgets
           activeTimers={activeTimers}
           openedLinks={openedLinks}
-          latestToolCall={latestToolCall}
           onDismissTimer={(id) =>
             setActiveTimers((prev) => prev.filter((t) => t.id !== id))
           }
@@ -620,13 +629,6 @@ export default function App() {
           onToggleMute={toggleMute}
         />
 
-        {/* Conversation Starters (Voice only) */}
-        <div className="w-full mt-2 mb-4">
-          <ConversationStarters
-            onSelectPrompt={handleSelectPrompt}
-            status={status}
-          />
-        </div>
       </main>
 
       {/* Floating Discrete Subtitles / Live Captions */}
@@ -635,16 +637,6 @@ export default function App() {
         status={status}
       />
 
-      {/* Settings Modal */}
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        activeVibe={currentVibeId}
-        onSelectVibe={(v) => {
-          setCurrentVibeId(v);
-        }}
-        onSignOut={handleSignOut}
-      />
 
       {/* Memory Vault Modal (Firestore Persistent Memory) */}
       <MemoryVaultModal
@@ -666,6 +658,28 @@ export default function App() {
         currentUser={currentUser}
         onSignOut={handleSignOut}
       />
+
+      {/* System Diagnostics HUD Panel */}
+      <DiagnosticPanel
+        isOpen={isDiagnosticsOpen}
+        onClose={() => setIsDiagnosticsOpen(false)}
+        currentUser={currentUser}
+        data={diagnosticData}
+      />
+
+      {/* Full Social Hub Overlay */}
+      {isSocialHubOpen && (
+        <div className="fixed inset-0 z-[100] animate-in fade-in slide-in-from-bottom-10 duration-500">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-3xl" onClick={() => setIsSocialHubOpen(false)} />
+          <div className="absolute inset-0 lg:inset-y-10 lg:inset-x-[15%] xl:inset-x-[25%] shadow-2xl shadow-cyan-500/20">
+            <SocialHub 
+              currentUser={currentUser} 
+              onBack={() => setIsSocialHubOpen(false)} 
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+

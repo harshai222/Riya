@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { LiveSessionStatus, VibeConfig, VibeType, VIBE_CONFIGS } from '../utils/sessionTypes';
-import { Settings, Sparkles, Volume2, Mic, Palette, Brain, LogOut, User as UserIcon, Shield, ShieldCheck } from 'lucide-react';
+import { Sparkles, Volume2, Mic, LogOut, User as UserIcon, Shield, Users } from 'lucide-react';
 import { User, isUserAdmin } from '../lib/firebase';
 
 interface HeaderHUDProps {
@@ -8,14 +8,14 @@ interface HeaderHUDProps {
   currentVibe: VibeConfig;
   userVolume: number;
   riyaVolume: number;
-  memoryCount: number;
-  currentUser: User | null;
   username?: string;
-  onOpenSettings: () => void;
-  onOpenMemoryVault: () => void;
-  onOpenAdminPanel?: () => void;
-  onSelectVibe: (vibe: VibeType) => void;
+  publicUid?: string;
+  currentUser: User | null;
   onSignOut: () => void;
+  onOpenSocial: () => void;
+  onOpenAdmin: () => void;
+  onOpenMemoryVault: () => void;
+  onOpenDiagnostics: () => void;
   onInterrupt?: () => void;
 }
 
@@ -24,16 +24,15 @@ export const HeaderHUD: React.FC<HeaderHUDProps> = ({
   currentVibe,
   userVolume,
   riyaVolume,
-  memoryCount,
-  currentUser,
   username,
-  onOpenSettings,
-  onOpenMemoryVault,
-  onOpenAdminPanel,
-  onSelectVibe,
+  publicUid,
+  currentUser,
   onSignOut,
+  onOpenSocial,
+  onOpenAdmin,
+  onOpenMemoryVault,
+  onOpenDiagnostics,
 }) => {
-  const [showVibeDropdown, setShowVibeDropdown] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
 
   const isAdmin = isUserAdmin(currentUser);
@@ -141,98 +140,36 @@ export const HeaderHUD: React.FC<HeaderHUDProps> = ({
         )}
       </div>
 
-      {/* Right Controls: Admin Button, Vibe Preset, Memory Vault & Google Profile */}
+      {/* Right Controls: Admin Button, Social Hub & Google Profile Dropdown */}
       <div className="flex items-center space-x-2">
         {/* Mobile status pill */}
         <div className="sm:hidden">{getStatusBadge()}</div>
 
-        {/* Dedicated Admin Panel Trigger (Shown ONLY to verified admin) */}
-        {isAdmin && onOpenAdminPanel && (
+        <button
+          onClick={onOpenSocial}
+          className="p-2 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-400 transition-all flex items-center gap-2 group"
+          title="Social Hub"
+        >
+          <Users className="w-4 h-4 group-hover:scale-110 transition-transform" />
+          <span className="text-[10px] font-bold uppercase tracking-widest hidden md:inline">Social</span>
+        </button>
+
+        {isAdmin && (
           <button
-            onClick={onOpenAdminPanel}
-            type="button"
-            aria-label="Open Admin Panel"
-            title="Administrator Control Panel"
-            className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-700/60 text-emerald-300 hover:text-white transition-all text-xs font-semibold cursor-pointer shadow-lg shadow-emerald-950/30"
+            onClick={onOpenAdmin}
+            className="p-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 transition-all flex items-center gap-2 group"
+            title="Admin Control Panel"
           >
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="hidden sm:inline">Admin Panel</span>
+            <Shield className="w-4 h-4 group-hover:scale-110 transition-transform" />
+            <span className="text-[10px] font-bold uppercase tracking-widest hidden md:inline">Admin</span>
           </button>
         )}
-
-        {/* Vibe Selector dropdown trigger */}
-        <div className="relative">
-          <button
-            onClick={() => {
-              setShowVibeDropdown(!showVibeDropdown);
-              setShowProfileMenu(false);
-            }}
-            type="button"
-            aria-label="Change ambient vibe"
-            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900/80 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition-all text-xs font-semibold cursor-pointer"
-          >
-            <Palette className="w-3.5 h-3.5 text-violet-400" />
-            <span className="hidden md:inline">{currentVibe.name}</span>
-          </button>
-
-          {showVibeDropdown && (
-            <div
-              className="absolute right-0 mt-2 w-56 rounded-xl bg-slate-950/95 border border-slate-800 shadow-2xl backdrop-blur-xl p-1.5 z-50 animate-in fade-in zoom-in-95 duration-150"
-              onMouseLeave={() => setShowVibeDropdown(false)}
-            >
-              <div className="px-2 py-1.5 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                Select Aura Vibe
-              </div>
-              {Object.values(VIBE_CONFIGS).map((vibe) => (
-                <button
-                  key={vibe.id}
-                  onClick={() => {
-                    onSelectVibe(vibe.id);
-                    setShowVibeDropdown(false);
-                  }}
-                  className={`w-full text-left px-2.5 py-2 rounded-lg text-xs font-medium flex items-center space-x-2 transition-all ${
-                    currentVibe.id === vibe.id
-                      ? 'bg-violet-950/80 text-violet-200 border border-violet-800/40'
-                      : 'text-slate-300 hover:bg-slate-900 hover:text-white'
-                  }`}
-                >
-                  <span
-                    className="w-3 h-3 rounded-full shrink-0 shadow-sm"
-                    style={{ backgroundColor: vibe.accentColor }}
-                  />
-                  <div className="truncate">
-                    <div className="font-semibold">{vibe.name}</div>
-                    <div className="text-[10px] text-slate-400 truncate">{vibe.tagline}</div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Memory Vault Button */}
-        <button
-          onClick={onOpenMemoryVault}
-          type="button"
-          aria-label="Open Memory Vault"
-          title="Riya's Memory Vault (Persistent database)"
-          className="relative flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900/80 hover:bg-slate-800 border border-slate-800 text-violet-300 hover:text-white transition-all text-xs font-semibold cursor-pointer"
-        >
-          <Brain className="w-3.5 h-3.5 text-violet-400" />
-          <span className="hidden sm:inline">Memory</span>
-          {memoryCount > 0 && (
-            <span className="px-1.5 py-0.2 rounded-full bg-violet-600 text-[10px] text-white font-mono font-bold">
-              {memoryCount}
-            </span>
-          )}
-        </button>
 
         {/* Google User Profile Avatar / Sign-Out Dropdown */}
         <div className="relative">
           <button
             onClick={() => {
               setShowProfileMenu(!showProfileMenu);
-              setShowVibeDropdown(false);
             }}
             type="button"
             aria-label="User account menu"
@@ -294,46 +231,25 @@ export const HeaderHUD: React.FC<HeaderHUDProps> = ({
                   <span>UID</span>
                 </span>
                 <span className="font-mono text-slate-300 truncate max-w-[140px]">
-                  {currentUser?.uid}
+                  {publicUid || '---'}
                 </span>
               </div>
 
               {/* Menu Actions */}
               <div className="mt-2.5 space-y-1">
-                {isAdmin && onOpenAdminPanel && (
+
+                {isAdmin && (
                   <button
                     onClick={() => {
                       setShowProfileMenu(false);
-                      onOpenAdminPanel();
+                      onOpenAdmin();
                     }}
-                    className="w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-xs text-emerald-300 hover:text-white hover:bg-emerald-950/60 border border-emerald-800/40 transition-colors cursor-pointer"
+                    className="w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-emerald-400 hover:text-emerald-200 hover:bg-emerald-950/60 transition-colors cursor-pointer"
                   >
-                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>Open Admin Panel</span>
+                    <Shield className="w-3.5 h-3.5" />
+                    <span>Admin Control Panel</span>
                   </button>
                 )}
-
-                <button
-                  onClick={() => {
-                    setShowProfileMenu(false);
-                    onOpenMemoryVault();
-                  }}
-                  className="w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-xs text-slate-300 hover:text-white hover:bg-slate-900 transition-colors cursor-pointer"
-                >
-                  <Brain className="w-3.5 h-3.5 text-violet-400" />
-                  <span>Memory Vault ({memoryCount} facts)</span>
-                </button>
-
-                <button
-                  onClick={() => {
-                    setShowProfileMenu(false);
-                    onOpenSettings();
-                  }}
-                  className="w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-xs text-slate-300 hover:text-white hover:bg-slate-900 transition-colors cursor-pointer"
-                >
-                  <Settings className="w-3.5 h-3.5 text-slate-400" />
-                  <span>Voice Settings</span>
-                </button>
 
                 <button
                   onClick={() => {

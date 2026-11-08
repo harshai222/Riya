@@ -21,13 +21,23 @@ import {
   orderBy,
   limit,
   runTransaction,
+  where,
 } from 'firebase/firestore';
+import {
+  getStorage,
+  ref,
+  uploadBytes,
+  uploadBytesResumable,
+  getDownloadURL,
+  deleteObject
+} from 'firebase/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 
 // CRITICAL: Pass firestoreDatabaseId from firebase-applet-config.json
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const storage = getStorage(app);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({
@@ -110,6 +120,7 @@ if (typeof window !== 'undefined') {
 
 export interface DbUserProfile {
   uid: string;
+  publicUid?: string;
   username?: string;
   usernameNormalized?: string;
   displayName?: string;
@@ -123,6 +134,71 @@ export interface DbUserProfile {
   createdAt: string;
   lastLoginAt: string;
   updatedAt?: string;
+  accountType: 'public' | 'private';
+  followersCount: number;
+  followingCount: number;
+}
+
+export interface DbFollowRelationship {
+  id: string; // followerUid_followingUid
+  followerUid: string;
+  followingUid: string;
+  status: 'following';
+  createdAt: string;
+}
+
+export interface DbFollowRequest {
+  id: string;
+  senderUid: string;
+  receiverUid: string;
+  status: 'pending' | 'accepted' | 'rejected';
+  createdAt: string;
+}
+
+export interface DbChatConversation {
+  id: string;
+  participantIds: string[];
+  lastMessage?: string;
+  lastMessageAt: string;
+  lastSenderId?: string;
+  unreadCount?: Record<string, number>;
+}
+
+export interface DbChatMessage {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  receiverId: string; // for easier validation/filtering
+  type: 'text' | 'image' | 'video';
+  text?: string;
+  mediaUrl?: string;
+  storagePath?: string;
+  fileName?: string;
+  mimeType?: string;
+  fileSize?: number;
+  createdAt: string;
+  read: boolean;
+}
+
+export interface DbSocialNotification {
+  id: string;
+  userId: string;
+  type: 'follow_request' | 'follow_accept' | 'new_message';
+  fromUid: string;
+  fromUsername?: string;
+  relatedId: string;
+  read: boolean;
+  createdAt: string;
+}
+
+export interface AdminGeminiConfig {
+  activeModel: string;
+  activeVoice: string;
+  version: number;
+  status: 'active' | 'invalid' | 'maintenance';
+  updatedAt: string;
+  apiKeyMasked: string;
+  isUsingEnvKey: boolean;
 }
 
 export interface DbUsernameReservation {
@@ -211,10 +287,6 @@ export async function checkUsernameAvailability(
   }
 }
 
-/**
- * Atomically claim a unique username in a Firestore transaction.
- * Ensures two users trying to claim the same username cannot both succeed.
- */
 export async function claimUsernameTransaction(
   user: User,
   rawUsername: string,
@@ -243,25 +315,43 @@ export async function claimUsernameTransaction(
 
       const userDoc = await transaction.get(userRef);
       const existingUserData = userDoc.exists() ? (userDoc.data() as DbUserProfile) : null;
+      
+      let publicUid = existingUserData?.publicUid;
+      if (!publicUid) {
+        publicUid = await generatePublicUid();
+      }
 
+      // Explicitly construct the profile to avoid 'undefined' and whitelisting issues
       const updatedProfile: DbUserProfile = {
         uid: user.uid,
+        publicUid,
         username: rawUsername.trim(),
         usernameNormalized: normalized,
-        displayName: user.displayName || existingUserData?.displayName || rawUsername.trim(),
-        email: user.email || existingUserData?.email || '',
-        photoURL: user.photoURL || existingUserData?.photoURL || '',
         preferredName: rawUsername.trim(),
         favoriteVibe: existingUserData?.favoriteVibe || 'cyberpunk',
-        bio: existingUserData?.bio || '',
-        role: isAdmin ? 'admin' : 'user',
+        role: isAdmin ? 'admin' : (existingUserData?.role || 'user'),
         onboardingCompleted: true,
         createdAt: existingUserData?.createdAt || now,
         lastLoginAt: now,
         updatedAt: now,
+        accountType: existingUserData?.accountType || 'public',
+        followersCount: existingUserData?.followersCount || 0,
+        followingCount: existingUserData?.followingCount || 0,
       };
+      
+      if (user.displayName || existingUserData?.displayName) {
+        updatedProfile.displayName = user.displayName || existingUserData?.displayName;
+      }
+      if (user.email || existingUserData?.email) {
+        updatedProfile.email = user.email || existingUserData?.email;
+      }
+      if (user.photoURL || existingUserData?.photoURL) {
+        updatedProfile.photoURL = user.photoURL || existingUserData?.photoURL;
+      }
+      if (existingUserData?.bio) {
+        updatedProfile.bio = existingUserData.bio;
+      }
 
-      // Write reservation into usernames collection
       transaction.set(usernameRef, {
         uid: user.uid,
         username: rawUsername.trim(),
@@ -269,8 +359,10 @@ export async function claimUsernameTransaction(
         createdAt: now,
       });
 
-      // Update user profile document
       transaction.set(userRef, updatedProfile, { merge: true });
+      
+      // Register the public UID in our uniqueness index
+      transaction.set(doc(db, 'publicUids', publicUid), { uid: user.uid, createdAt: now });
 
       return updatedProfile;
     });
@@ -297,40 +389,97 @@ export async function getUserProfile(userId: string): Promise<DbUserProfile | nu
   }
 }
 
+export async function generatePublicUid(): Promise<string> {
+  let attempts = 0;
+  while (attempts < 15) {
+    const min = 1000000000;
+    const max = 99999999999;
+    const randomNum = Math.floor(Math.random() * (max - min + 1)) + min;
+    const candidate = randomNum.toString();
+    
+    try {
+      const indexRef = doc(db, 'publicUids', candidate);
+      const snap = await getDoc(indexRef);
+      
+      if (!snap.exists()) {
+        return candidate;
+      }
+    } catch (err) {
+      console.warn('[GeneratePublicUid] Uniqueness lookup notice:', err);
+      return candidate;
+    }
+    attempts++;
+  }
+  return Math.floor(1000000000 + Math.random() * 90000000000).toString();
+}
+
 export async function syncUserProfileOnLogin(user: User): Promise<DbUserProfile> {
   const path = `users/${user.uid}`;
   const now = new Date().toISOString();
   const isAdmin = isUserAdmin(user);
 
   try {
-    const snap = await getDoc(doc(db, 'users', user.uid));
+    const docRef = doc(db, 'users', user.uid);
+    const snap = await getDoc(docRef);
     if (snap.exists()) {
       const existing = snap.data() as DbUserProfile;
+      let publicUid = existing.publicUid;
+
+      if (!publicUid) {
+        console.log(`[Migration] Generating Public UID for user: ${user.uid}`);
+        publicUid = await generatePublicUid();
+      }
+
       const updated: DbUserProfile = {
-        ...existing,
-        displayName: user.displayName || existing.displayName,
-        email: user.email || existing.email,
-        photoURL: user.photoURL || existing.photoURL,
+        uid: user.uid,
+        publicUid,
+        displayName: user.displayName || existing.displayName || '',
+        email: user.email || existing.email || '',
+        photoURL: user.photoURL || existing.photoURL || '',
+        username: existing.username,
+        usernameNormalized: existing.usernameNormalized,
+        preferredName: existing.preferredName || user.displayName?.split(' ')[0] || 'Friend',
+        favoriteVibe: existing.favoriteVibe || 'cyberpunk',
+        bio: existing.bio || '',
         role: isAdmin ? 'admin' : (existing.role || 'user'),
+        onboardingCompleted: existing.onboardingCompleted ?? false,
+        createdAt: existing.createdAt || now,
         lastLoginAt: now,
         updatedAt: now,
+        accountType: existing.accountType || 'public',
+        followersCount: existing.followersCount || 0,
+        followingCount: existing.followingCount || 0,
       };
-      await setDoc(doc(db, 'users', user.uid), updated, { merge: true });
+      
+      await setDoc(docRef, updated, { merge: true });
+      
+      if (!existing.publicUid) {
+        await setDoc(doc(db, 'publicUids', publicUid), { uid: user.uid, createdAt: now });
+      }
+
       return updated;
     } else {
+      const publicUid = await generatePublicUid();
       const newProfile: DbUserProfile = {
         uid: user.uid,
-        displayName: user.displayName || undefined,
-        email: user.email || undefined,
-        photoURL: user.photoURL || undefined,
+        publicUid,
+        displayName: user.displayName || '',
+        email: user.email || '',
+        photoURL: user.photoURL || '',
         preferredName: user.displayName ? user.displayName.split(' ')[0] : 'Friend',
         favoriteVibe: 'cyberpunk',
         role: isAdmin ? 'admin' : 'user',
         onboardingCompleted: false,
         createdAt: now,
         lastLoginAt: now,
+        accountType: 'public',
+        followersCount: 0,
+        followingCount: 0,
       };
-      await setDoc(doc(db, 'users', user.uid), newProfile);
+      await setDoc(docRef, newProfile);
+      
+      await setDoc(doc(db, 'publicUids', publicUid), { uid: user.uid, createdAt: now });
+
       return newProfile;
     }
   } catch (err) {
@@ -430,7 +579,6 @@ export async function saveConversationSession(
 
     if (messages && messages.length > 0) {
       for (const msg of messages) {
-        const msgPath = `users/${session.userId}/conversations/${session.id}/messages/${msg.id}`;
         await setDoc(doc(db, 'users', session.userId, 'conversations', session.id, 'messages', msg.id), msg);
       }
     }
@@ -476,10 +624,171 @@ export async function getConversationMessages(
 // ADMIN PANEL OPERATIONS (AUTHORIZED ONLY)
 // ==========================================
 
+async function getAdminHeaders() {
+  const user = auth.currentUser;
+  if (!user) throw new Error('Unauthenticated');
+  const token = await user.getIdToken();
+  return {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`,
+  };
+}
+
+export async function adminGetGeminiConfig(): Promise<AdminGeminiConfig> {
+  const headers = await getAdminHeaders();
+  const res = await fetch('/api/admin/config', { headers });
+  const contentType = res.headers.get('content-type') || '';
+
+  if (!res.ok) {
+    let errorMsg = `Server error (${res.status})`;
+    if (contentType.includes('application/json')) {
+      try {
+        const err = await res.json();
+        errorMsg = err.error || err.message || errorMsg;
+      } catch (e) {}
+    }
+    throw new Error(errorMsg);
+  }
+
+  if (!contentType.includes('application/json')) {
+    throw new Error('Server returned invalid HTML response instead of JSON configuration. Please ensure dev server is running on port 3000.');
+  }
+
+  return res.json();
+}
+
+export async function adminUpdateGeminiConfig(payload: {
+  activeModel?: string;
+  activeVoice?: string;
+  apiKey?: string;
+  status?: string;
+}): Promise<{ success: boolean; message?: string; category?: string }> {
+  const user = auth.currentUser;
+  if (!user || !isUserAdmin(user)) {
+    throw new Error('Unauthorized: Admin access required');
+  }
+
+  const configRef = doc(db, 'systemConfig', 'gemini');
+  const now = new Date().toISOString();
+
+  // 1. Fetch existing config to preserve values if partial update
+  let existingData: any = {};
+  try {
+    const snap = await getDoc(configRef);
+    if (snap.exists()) {
+      existingData = snap.data();
+    }
+  } catch (err) {
+    console.warn('[AdminUpdate] Could not fetch existing Firestore config:', err);
+  }
+
+  const targetModel = (payload.activeModel && payload.activeModel.trim()) ? payload.activeModel.trim() : (existingData.activeModel || 'gemini-3.1-flash-live-preview');
+  const targetVoice = (payload.activeVoice && payload.activeVoice.trim()) ? payload.activeVoice.trim() : (existingData.activeVoice || 'Lyra');
+  const targetApiKey = (payload.apiKey !== undefined) ? payload.apiKey.trim() : existingData.apiKey;
+  const targetStatus = payload.status || existingData.status || 'active';
+  const newVersion = (typeof existingData.version === 'number' ? existingData.version : 1) + 1;
+
+  const docPayload = {
+    apiKey: targetApiKey || '',
+    activeModel: targetModel,
+    activeVoice: targetVoice,
+    version: newVersion,
+    status: targetStatus,
+    updatedAt: now,
+    updatedBy: user.email || ADMIN_GOOGLE_EMAIL,
+  };
+
+  try {
+    // 2. Write to Firestore systemConfig/gemini (Source of Truth)
+    await setDoc(configRef, docPayload, { merge: true });
+
+    // 3. Verification read from Firestore
+    const verifySnap = await getDoc(configRef);
+    if (!verifySnap.exists() || verifySnap.data()?.updatedAt !== now) {
+      throw new Error('API Key verification failed: The document was not correctly persisted to Firestore.');
+    }
+
+    console.log('[AdminUpdate] Successfully persisted configuration to Firestore systemConfig/gemini');
+  } catch (err: any) {
+    console.error('[AdminUpdate] Firestore write/verification failed:', err);
+    throw new Error(`Firestore persistence failed: ${err.message || 'Permission denied or network error'}`);
+  }
+
+  // 4. Notify backend to validate credentials and sync runtime state
+  const headers = await getAdminHeaders();
+  const res = await fetch('/api/admin/config/update', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+  });
+  const contentType = res.headers.get('content-type') || '';
+
+  if (!contentType.includes('application/json')) {
+    throw new Error('Server returned non-JSON response during configuration sync.');
+  }
+
+  const data = await res.json();
+  if (!res.ok) {
+    const categoryPrefix = data.category ? `[${data.category}] ` : '';
+    throw new Error(`${categoryPrefix}${data.message || data.error || 'Failed to update config'}`);
+  }
+  return data;
+}
+
+export async function adminTestGeminiConfig(payload?: {
+  activeModel?: string;
+  apiKey?: string;
+}): Promise<{ status: string; message: string; category?: string; testedModel?: string }> {
+  const headers = await getAdminHeaders();
+  const res = await fetch('/api/admin/config/test', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload || {}),
+  });
+  const contentType = res.headers.get('content-type') || '';
+
+  if (!contentType.includes('application/json')) {
+    throw new Error('Server returned non-JSON response during API test.');
+  }
+
+  const data = await res.json();
+  if (!res.ok) {
+    const categoryPrefix = data.category ? `[${data.category}] ` : '';
+    throw new Error(`${categoryPrefix}${data.message || data.error || 'Test failed'}`);
+  }
+  return data;
+}
+
 export async function adminSearchUserByUsername(
-  rawUsername: string
+  rawSearch: string
 ): Promise<{ userProfile: DbUserProfile | null; reservation: DbUsernameReservation | null }> {
-  const normalized = normalizeUsername(rawUsername);
+  const input = (rawSearch || '').trim();
+  if (!input) return { userProfile: null, reservation: null };
+
+  // 1. Search by Public Numeric UID (10-11 digits)
+  if (/^\d{10,11}$/.test(input)) {
+    try {
+      const q = query(collection(db, 'users'), where('publicUid', '==', input), limit(1));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const userProfile = snap.docs[0].data() as DbUserProfile;
+        // Fetch reservation if username exists
+        let reservation: DbUsernameReservation | null = null;
+        if (userProfile.usernameNormalized) {
+          const resSnap = await getDoc(doc(db, 'usernames', userProfile.usernameNormalized));
+          if (resSnap.exists()) {
+            reservation = resSnap.data() as DbUsernameReservation;
+          }
+        }
+        return { userProfile, reservation };
+      }
+    } catch (err) {
+      console.warn('[AdminSearch] Public UID search error:', err);
+    }
+  }
+
+  // 2. Existing Username Search
+  const normalized = normalizeUsername(input);
   const path = `usernames/${normalized}`;
   try {
     const snap = await getDoc(doc(db, 'usernames', normalized));
@@ -518,5 +827,31 @@ export async function signOutUser(): Promise<void> {
   await fbSignOut(auth);
 }
 
+export async function getSystemGeminiConfig(): Promise<{ apiKey: string; activeModel?: string; version?: number; updatedAt?: string }> {
+  try {
+    const snap = await getDoc(doc(db, 'systemConfig', 'gemini'));
+    if (snap.exists()) {
+      const data = snap.data() as any;
+      const apiKey = (data?.apiKey || '').trim();
+      if (apiKey) {
+        return {
+          apiKey,
+          activeModel: data.activeModel,
+          version: data.version,
+          updatedAt: data.updatedAt,
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('[GeminiConfig] Could not read systemConfig/gemini from Firestore, falling back...');
+  }
+  return {
+    apiKey: '',
+    activeModel: 'gemini-3.1-flash-live-preview',
+    version: 1,
+  };
+}
+
 export { onAuthStateChanged };
+export { ref, uploadBytes, uploadBytesResumable, getDownloadURL, deleteObject };
 export type { User };

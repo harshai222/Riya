@@ -72,7 +72,7 @@ export const ConversationStarters: React.FC<ConversationStartersProps> = ({
         </span>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         {STARTERS.map((s, idx) => {
           const Icon = s.icon;
           return (
@@ -80,14 +80,16 @@ export const ConversationStarters: React.FC<ConversationStartersProps> = ({
               key={idx}
               onClick={() => onSelectPrompt(s.phrase)}
               type="button"
-              className={`flex items-start space-x-2 p-2.5 rounded-xl border backdrop-blur-sm transition-all duration-200 text-left cursor-pointer group active:scale-95 ${s.bg} ${s.borderColor}`}
+              className={`flex items-start space-x-3 p-3.5 rounded-2xl border backdrop-blur-md transition-all duration-300 text-left cursor-pointer group active:scale-[0.98] shadow-lg hover:shadow-violet-500/10 ${s.bg} ${s.borderColor}`}
             >
-              <Icon className={`w-4 h-4 mt-0.5 shrink-0 transition-transform group-hover:scale-110 ${s.color}`} />
-              <div className="overflow-hidden">
-                <div className="text-xs font-semibold text-slate-200 group-hover:text-white truncate">
+              <div className={`p-2 rounded-xl bg-slate-950/40 border border-white/5 transition-transform group-hover:scale-110 group-hover:bg-slate-950/60 ${s.color}`}>
+                <Icon className="w-4 h-4 shrink-0" />
+              </div>
+              <div className="overflow-hidden pt-0.5">
+                <div className="text-xs font-bold text-slate-100 group-hover:text-white transition-colors truncate">
                   {s.title}
                 </div>
-                <div className="text-[10px] text-slate-400 line-clamp-1 group-hover:text-slate-300">
+                <div className="text-[10px] text-slate-400 font-medium line-clamp-1 group-hover:text-slate-300 transition-colors mt-0.5">
                   "{s.phrase}"
                 </div>
               </div>

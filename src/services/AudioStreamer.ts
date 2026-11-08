@@ -19,6 +19,15 @@ export class AudioStreamer {
     this.onSpeakingChange = callbacks?.onSpeakingChange;
   }
 
+  public resume() {
+    this.initContext();
+    if (this.audioCtx && this.audioCtx.state === 'suspended') {
+      this.audioCtx.resume().catch((err) => {
+        console.warn('[AudioStreamer] Resume error:', err);
+      });
+    }
+  }
+
   private initContext() {
     if (!this.audioCtx || this.audioCtx.state === 'closed') {
       const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
@@ -32,7 +41,7 @@ export class AudioStreamer {
       this.startVolumeMonitoring();
     }
     if (this.audioCtx.state === 'suspended') {
-      this.audioCtx.resume();
+      this.audioCtx.resume().catch(() => {});
     }
   }
 
@@ -114,6 +123,10 @@ export class AudioStreamer {
         this.onSpeakingChange(speaking);
       }
     }
+  }
+
+  public getIsPlaying(): boolean {
+    return this.activeSources.size > 0 || this.isSpeaking;
   }
 
   /**

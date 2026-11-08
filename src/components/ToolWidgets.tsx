@@ -1,11 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { ActiveTimer, OpenedLinkAction, ToolCallExecution } from '../utils/sessionTypes';
-import { ExternalLink, Timer, X, Sparkles, CheckCircle2 } from 'lucide-react';
+import { ExternalLink, Timer, X, CheckCircle2 } from 'lucide-react';
 
 interface ToolWidgetsProps {
   activeTimers: ActiveTimer[];
   openedLinks: OpenedLinkAction[];
-  latestToolCall: ToolCallExecution | null;
   onDismissTimer: (timerId: string) => void;
   onDismissLink: (linkId: string) => void;
 }
@@ -13,7 +12,6 @@ interface ToolWidgetsProps {
 export const ToolWidgets: React.FC<ToolWidgetsProps> = ({
   activeTimers,
   openedLinks,
-  latestToolCall,
   onDismissTimer,
   onDismissLink,
 }) => {
@@ -46,21 +44,6 @@ export const ToolWidgets: React.FC<ToolWidgetsProps> = ({
 
   return (
     <div className="w-full max-w-md mx-auto px-4 space-y-2.5 z-20 pointer-events-auto">
-      {/* Latest Tool Execution Flash Badge */}
-      {latestToolCall && (
-        <div className="flex items-center justify-between px-3.5 py-2 rounded-xl bg-violet-950/80 border border-violet-800/60 shadow-lg shadow-violet-950/40 backdrop-blur-md animate-in slide-in-from-top-2 duration-300">
-          <div className="flex items-center space-x-2 text-xs">
-            <Sparkles className="w-4 h-4 text-violet-400 animate-spin" />
-            <span className="text-violet-200 font-semibold uppercase tracking-wider">
-              {latestToolCall.toolName}
-            </span>
-            <span className="text-slate-400">executed</span>
-          </div>
-          <span className="text-[10px] text-violet-400 font-mono">
-            Just now
-          </span>
-        </div>
-      )}
 
       {/* Active Countdowns */}
       {timers.map((t) => {
